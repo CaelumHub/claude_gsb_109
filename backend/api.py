@@ -180,14 +180,19 @@ class ApiRouter:
             if not isinstance(edges, list):
                 return _error("edges 必须是列表")
             normalised = []
+            invalid = 0
             for e in edges:
                 if isinstance(e, (list, tuple)) and len(e) >= 2:
                     try:
                         normalised.append((int(e[0]), int(e[1]), float(e[2]) if len(e) > 2 else 1.0))
                     except (TypeError, ValueError):
-                        continue
+                        invalid += 1
+                else:
+                    invalid += 1
+            # ``imported`` from the store counts only edges actually written;
+            # self-loops / duplicates / malformed rows are reported separately.
             result = self.service.store.import_edges(normalised)
-            result["imported"] = len(edges)
+            result["invalid"] = invalid
             self.service.invalidate_graph()
             storage.log_import({**result, "source": source, "time": config.now_ms()})
             return 200, {**result, "source": source}

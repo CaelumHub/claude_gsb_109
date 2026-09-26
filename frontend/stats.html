@@ -97,10 +97,12 @@
         '<div class="row spread"><span class="muted">模块度 Q</span><strong>' + (s.modularity != null ? s.modularity.toFixed(4) : "—") + "</strong></div>";
     }
 
-    function renderShards(shards) {
+    function renderShards(shards, graphEdgeCount) {
       const box = document.getElementById("shards");
       if (!shards || !shards.length) { box.innerHTML = C.emptyState("💾", "无分片数据"); return; }
-      const totalEdges = shards.reduce((a, b) => a + b.edges, 0);
+      // Use the canonical graph edge count (unique friendships); per-shard
+      // ``edges`` are raw stored rows that may include reversed duplicates.
+      const totalEdges = graphEdgeCount;
       const totalSize = shards.reduce((a, b) => a + b.size_bytes, 0);
       let html = '<div class="row wrap mb-8"><span class="badge info">' + shards.length + ' 分片</span>' +
                  '<span class="badge brand">' + totalEdges + ' 边</span>' +
@@ -122,7 +124,7 @@
         renderDegreeDist(s.graph.degree_distribution);
         renderPagerank(pr);
         renderCommunitySizes(s);
-        renderShards(s.shards);
+        renderShards(s.shards, (s.graph || {}).edges);
       }).catch((e) => C.toast(e.message, "error"));
     }
 

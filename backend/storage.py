@@ -130,7 +130,10 @@ def rebuild_index_from_shards() -> GraphIndex:
     imports or merges, so that day-to-day lookups stay O(1).
     """
     index = GraphIndex()
-    edge_count = 0
+    # The graph is undirected: a friendship may appear as (u, v) in one shard
+    # and (v, u) in another, so only a canonicalised global set gives the true
+    # edge count.  Self-loops are not graph edges and are excluded.
+    unique_edges: Set[Tuple[int, int]] = set()
     for shard_id in range(config.SHARD_COUNT):
         data = _load_shard(shard_id)
         for user in data["users"]:
@@ -140,14 +143,15 @@ def rebuild_index_from_shards() -> GraphIndex:
             u, v = int(edge[0]), int(edge[1])
             index.user_shard.setdefault(u, shard_id)
             index.user_shard.setdefault(v, shard_id)
-        edge_count += len(data["edges"])
+            if u != v:
+                unique_edges.add((u, v) if u < v else (v, u))
     # ``user_shard`` is keyed by unique user id, so its length is the true node
     # count (the per-shard ``users`` maps are denormalised and may repeat ids).
     index.meta.update(
         {
             "version": config.INDEX_VERSION,
             "node_count": len(index.user_shard),
-            "edge_count": edge_count,
+            "edge_count": len(unique_edges),
             "shard_count": config.SHARD_COUNT,
             "built_at": config.now_ms(),
         }
@@ -277,18 +281,36 @@ class GraphStore:
     def import_edges(self, edges: Iterable[Tuple[int, int, float]]) -> dict:
         """Append edges to shards and refresh the index incrementally.
 
-        Strategy: buffer edges into per-shard pending lists, then flush each
-        touched shard by merging pending edges with the existing edge list,
-        sorting and deduplicating.  Returns import statistics.
+        Strategy: classify the incoming edges, discarding self-loops and
+        duplicates (against the on-disk graph or within the batch, in either
+        orientation); buffer the genuinely new edges into per-shard pending
+        lists, then flush each touched shard by merging and sorting.  Returns
+        import statistics -- ``imported`` counts only edges actually written.
         """
         pending: Dict[int, List[Tuple[int, int, float]]] = defaultdict(list)
-        skipped = 0
         self_loops = 0
+        duplicates = 0
+
+        # Snapshot every edge already on disk (canonical undirected pairs) so
+        # cross-shard reversed pairs are detected too, not just local repeats.
+        existing: Set[Tuple[int, int]] = set()
+        for shard_id in range(config.SHARD_COUNT):
+            data = _load_shard(shard_id)
+            for edge in data["edges"]:
+                u, v = int(edge[0]), int(edge[1])
+                if u != v:
+                    existing.add((u, v) if u < v else (v, u))
+
         for u, v, w in edges:
             u, v = int(u), int(v)
             if u == v:
                 self_loops += 1
                 continue
+            key = (u, v) if u < v else (v, u)
+            if key in existing:
+                duplicates += 1
+                continue
+            existing.add(key)
             su = _user_shard(u)
             pending[su].append((u, v, float(w)))
 
@@ -305,12 +327,10 @@ class GraphStore:
             touched_shards.append((shard_id, len(data["users"]), len(data["edges"])))
 
         self._refresh_index(touched_shards)
-        imported = 0
-        for _shard_id, edge_list in pending.items():
-            imported += len(edge_list)
+        imported = sum(len(edge_list) for edge_list in pending.values())
         return {
             "imported": imported,
-            "skipped": 0,
+            "skipped": duplicates,
             "self_loops": self_loops,
             "touched_shards": len(touched_shards),
         }
@@ -323,20 +343,23 @@ class GraphStore:
             for u, v, w, _ts in data["edges"]:
                 self.index.user_shard.setdefault(int(u), shard_id)
                 self.index.user_shard.setdefault(int(v), shard_id)
-        total_edges = 0
-        total_nodes = len(self.index.user_shard)
+        # Recompute totals from a global canonical view: the per-shard
+        # ``users`` maps are denormalised, and an undirected edge can be stored
+        # as (u, v) and (v, u) in different shards, so raw row counts
+        # overstate the graph.  Only unique non-self-loop pairs are edges.
+        unique_edges: Set[Tuple[int, int]] = set()
         for shard_id in range(config.SHARD_COUNT):
             path = _shard_path(shard_id)
             if not os.path.exists(path):
                 continue
             data = _load_shard(shard_id)
-            edge_count = len(data["edges"])
-            total_edges += edge_count
-            if config.INDEX_EDGE_COUNT_INCLUDE_USERS:
-                user_count = len(data["users"])
-                total_edges += user_count
+            for edge in data["edges"]:
+                u, v = int(edge[0]), int(edge[1])
+                if u != v:
+                    unique_edges.add((u, v) if u < v else (v, u))
+        total_nodes = len(self.index.user_shard)
         self.index.meta["node_count"] = total_nodes
-        self.index.meta["edge_count"] = total_edges
+        self.index.meta["edge_count"] = len(unique_edges)
         self.index.meta["built_at"] = config.now_ms()
         self.index.save()
 

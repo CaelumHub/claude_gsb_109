@@ -98,7 +98,11 @@ class SocialGraphService:
     def graph_stats(self) -> dict:
         graph = self.get_graph()
         n = graph.node_count
-        m = self.store.index.meta.get("edge_count", graph.edge_count)
+        # Use the frozen graph's own count (unique undirected edges), the same
+        # source the visualisation page uses.  The on-disk index aggregates raw
+        # shard rows, which can include reversed duplicates, so trusting it made
+        # the panel disagree with the actual graph and inflate the density.
+        m = graph.edge_count
         degrees = [graph.degree(nid) for nid in graph.nodes]
         avg = (sum(degrees) / n) if n else 0.0
         density = (2.0 * m / (n * (n - 1))) if n > 1 else 0.0

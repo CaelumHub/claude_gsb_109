@@ -94,6 +94,7 @@
             '<div class="mt-8">导入 <strong>' + r.imported + "</strong> 条边</div>" +
             '<div class="mt-8">跳过重复 <strong>' + r.skipped + "</strong> 条</div>" +
             '<div class="mt-8">自环忽略 <strong>' + r.self_loops + "</strong> 条</div>" +
+            '<div class="mt-8">非法条目 <strong>' + (r.invalid || 0) + "</strong> 条</div>" +
             '<div class="mt-8">触达分片 <strong>' + r.touched_shards + "</strong> 个</div>";
           C.toast("已导入 " + r.imported + " 条关系", "success");
           loadLog();
@@ -107,7 +108,8 @@
       // 后端不直接提供日志读取，这里用 stats 的 shard 信息给出概览。
       api.stats().then((s) => {
         const shards = s.shards || [];
-        const totalEdges = shards.reduce((a, b) => a + b.edges, 0);
+        // 边数以图的真实口径（唯一好友关系）为准，不加分片内原始存储行。
+        const totalEdges = (s.graph || {}).edges;
         const totalUsers = shards.reduce((a, b) => a + b.users, 0);
         box.innerHTML =
           '<div class="row wrap">' +
