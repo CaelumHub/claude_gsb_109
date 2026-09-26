@@ -187,7 +187,6 @@ class ApiRouter:
                     except (TypeError, ValueError):
                         continue
             result = self.service.store.import_edges(normalised)
-            result["imported"] = len(edges)
             self.service.invalidate_graph()
             storage.log_import({**result, "source": source, "time": config.now_ms()})
             return 200, {**result, "source": source}

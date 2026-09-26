@@ -332,9 +332,6 @@ class GraphStore:
             data = _load_shard(shard_id)
             edge_count = len(data["edges"])
             total_edges += edge_count
-            if config.INDEX_EDGE_COUNT_INCLUDE_USERS:
-                user_count = len(data["users"])
-                total_edges += user_count
         self.index.meta["node_count"] = total_nodes
         self.index.meta["edge_count"] = total_edges
         self.index.meta["built_at"] = config.now_ms()

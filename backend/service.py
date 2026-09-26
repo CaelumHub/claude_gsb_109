@@ -98,7 +98,10 @@ class SocialGraphService:
     def graph_stats(self) -> dict:
         graph = self.get_graph()
         n = graph.node_count
-        m = self.store.index.meta.get("edge_count", graph.edge_count)
+        # Edge count comes from the real (deduplicated, undirected) graph --
+        # the same source as the graph visualisation endpoint -- so the stats
+        # panel can never drift from what the user sees on the graph page.
+        m = graph.edge_count
         degrees = [graph.degree(nid) for nid in graph.nodes]
         avg = (sum(degrees) / n) if n else 0.0
         density = (2.0 * m / (n * (n - 1))) if n > 1 else 0.0
